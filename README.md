@@ -1,3 +1,9 @@
+<h1 align="center">WWW ’27 Demo Submission</h1>
+
+<p align="center"><strong>The ACM Web Conference 2027</strong></p>
+
+<p align="center">A cleaned-up version of this project using a different dataset was submitted to the Demonstrations track.</p>
+
 
 # 🔞 Reverse Hentai Search
 
