@@ -2,7 +2,7 @@
 
 <p align="center"><strong>The ACM Web Conference 2027</strong></p>
 
-<p align="center">A cleaned-up version of this project using a different dataset was submitted to the Demonstrations track; <strong>submission number 12</strong>.</p>
+<p align="center">An adaptation of this project using a different dataset has been submitted to the Demonstrations track.</p>
 
 
 # 🔞 Reverse Hentai Search
