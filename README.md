@@ -5,92 +5,80 @@
 <p align="center">An adaptation of this project using a different dataset has been submitted to the Demonstrations track.</p>
 
 
-# 🔞 Reverse Hentai Search
+# Reverse Hentai Search
 
-A fully client-side reverse image search engine for hentai/manga.  
-Drop in a panel → get the source. Runs entirely in your browser. No servers. No tracking. No shame.
+A static, browser-side reverse image search engine for manga panels.
+The browser computes a DINO-vits16 embedding on the CPU, ranks 96,000 balanced
+L2 centroids with WebAssembly SIMD, then downloads selected vector postings and
+metadata from Cloudflare Pages. Query images stay in the browser.
 
-Live Demo: https://echicode.com
+[Live site](https://echicode.com) · [Release and pipeline details](client/scripts/README.md)
 
----
-
-## 🔍 What It Does
-
-- 🖼️ Reverse-search hentai panels using DINO-vit16 embeddings  
-- 🧠 Uses client-side clustering to scale to 10k galleries, which amounts to ~xxx images
-- 🪶 Lazy loads metadata (tags, source links, affiliate offers) per cluster  
-- 💻 Works fully offline after load  
-- 🔐 Privacy-respecting by design  
-
----
-
-## 🧱 Project Structure
-
-```
-reverse-hentai-search/
-├── client/           # Frontend (React + TS + Vite)
-├── scripts/          # Python tools to generate embeddings, clusters, and metadata
-└── README.md
+```text
+client/  Browser source, assets, tests and build tools
+src/     Python embedding, metadata, clustering and data deployment tools
 ```
 
----
+The prepared client uses the fully uploaded 96k dataset through immutable
+Cloudflare URLs. Dataset files, local credentials, dependencies, generated builds
+and benchmark results are excluded from Git. The frontend is plain JavaScript,
+HTML and CSS.
 
-## 🚀 Running Locally
+## Run locally
+
+From the repository root, use Python 3 to serve the client with the isolation
+headers required for multithreaded CPU inference:
 
 ```bash
-git clone https://github.com/echicode/reverse-hentai-search
-cd reverse-hentai-search/client
-npm install
-npm run dev
+python3 client/scripts/serve-local.py --port 8765
 ```
 
-To build for production:
+Open <http://127.0.0.1:8765/>. The first load downloads the model, library/runtime
+and centroid index in parallel. Postings, metadata and result images require
+network access as searches need them.
+
+## Test and build the client
+
+Use a current Node.js version with `node --test` support:
 
 ```bash
+cd client
+npm ci
+npm test
 npm run build
 ```
 
-Place generated data files (embeddings, cluster IDs, metadata chunks) in the appropriate folder.
+Publish `client/dist/` as the static frontend when ready. Keep `_headers` in the
+published output. Building or pushing this repository does not upload a dataset.
 
----
+## Python pipeline
 
-## 🛠 Preprocessing Workflow (Python)
+Run pipeline commands from `src/`. The working pipeline uses Python 3.13;
+NumPy and Brotli are required for index export and release validation. Training
+uses NVIDIA cuVS/CuPy; image embedding uses PyTorch and Transformers. Scraping,
+metadata tools and optional codec comparisons have additional dependencies
+listed in their imports. A new machine needs a compatible environment installed
+before running these tools.
 
-To build your own search dataset:
+`main.py` generates embeddings, `clustering.py` builds a resumable index,
+`balanced_l2/export_posting_quantization.py` exports posting codecs,
+`prepare_client_release.py` validates and configures a local dataset, and
+`deploy_data.py` uploads and verifies static data batches. With this sibling
+layout, pass `--client ../client` to the latter two tools. `build_final.sh`
+selects the sibling client automatically.
 
-1. Extract images and save to galleries; check format compatible with the output of scripts/scrape.py.
-- Either run a simple clustering via 
-```scripts/main_just_hash.py --no-download``
-- Otherwise, for more finetuning, call ```scripts/hash/embed_existing_galleries.py``` and build the clustering via ``scripts/clusters```, with optional modifing the clustering.
-2. The full result, clustered and all, is in clusters. Change the folder in the client to this one.
+Scraper credentials are read from the `API_KEY` and `USER_TOKEN` environment
+variables; do not commit their values. Source galleries, vectors, metadata and
+native build checkpoints are local inputs rather than repository contents.
 
-All scripts are modular — you can plug in your own galleries or tweak the embedding pipeline.
+Upload and verify the complete dataset before switching the frontend to it.
+The [release instructions](client/scripts/README.md) cover final builds,
+bounded-memory commands, presets and data deployment. The current release is
+96,000 LVQ6 centroids with Brotli; postings can switch between LVQ6, LVQ8 and FP16.
 
----
+## Support
 
-## 💾 Models
-
-Uses [Xenova's `dinov2-vits16`](https://huggingface.co/Xenova/dino-vits16) ONNX model for WebAssembly-based embedding generation in-browser.
-
-Python pipeline uses the same model (but from OpenAI) for embedding compatibility.
-
----
-
-## 🔐 Privacy
-
-- No cookies, no telemetry, no external API calls  
-- All matching and computation is done locally  
-- Metadata is lazy-loaded from static JSON chunks  
-
----
-
-## 💸 Support
-
-[![Buy Me a Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/echicode)
-
-Fuel the code. Feed the lust.
-
----
+[Buy Me a Coffee](https://www.buymeacoffee.com/echicode)
 
 ## 📜 License
 

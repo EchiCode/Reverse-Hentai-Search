@@ -1,75 +1,169 @@
-// Global variables
 let dinoModel = null;
+let dinoInferenceRuntime = null;
 let imageDataUrl = null;
-let cachedImageVectors = null;
+let selectedObjectUrl = null;
+let cachedImageEmbedding = null;
+let searchIndexPreload = null;
 let searchInProgress = false;
 let currentSearchAbortController = null;
-let currentThreshold = 80; // Default threshold (lowered for DINO + model differences)
-let currentSearchClusters = 10; // Default number of clusters to search
-const MAX_CLUSTERS = 50;
+let currentThreshold = 80;
+let currentSearchClusters = 10;
+let currentSearchQuantization = 'fp16';
+let currentQualityLevel = 1;
+let manualSearchEnabled = false;
+let quantizedPostingsReady = false;
+let meanPostingBytes = null;
+let searchSettingsReady = false;
+let extraPrecisionEnabled = false;
+let imageSelectionVersion = 0;
 
-// Add pako for gzip decompression
-// import pako from 'https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.mjs';
-
-// Add affiliate links mapping
-const affiliateLinks = {
-    // Example tags
-    "cat": ["https://jlist.com/shop/product/neko-musume-catgirl-pretty-h-tamapremium","https://jlist.com/shop/product/Mesuneko-Servant-----Catgirl-Servant"],
-    "loli": ["https://jlist.com/shop/dohna-dohna","https://jlist.com/shop/product/Innocent-CQ-2"],
-    "virgin": ["https://jlist.com/shop/product/Innocent-CQ-2","https://jlist.com/shop/product/Virgin-Matchless"],
-    "Anal": ["https://peachesandscreams.co.uk/collections/anal-range"]
-    //"pet": "https://amzn.to/petaccessories",
-    // Add more as needed
+const MAX_IMAGE_BYTES = 100 * 1024 * 1024;
+const DEFAULT_MAX_CLUSTERS = 100;
+const EXTRA_PRECISION_MAX_CLUSTERS = 1000;
+// Switch both fields only after the complete replacement dataset is verified.
+const SEARCH_DATASET = getSearchRelease() || {
+    headCount: 8000,
+    centroidSha256: 'd1ff168ac7a5f0475b0ebcd1c665a55881485bace9e4398332bb1010c6276d42'
 };
+const SEARCH_QUALITY_LEVELS = getSearchQualityLevels(SEARCH_DATASET.headCount);
 
-// Synonyms mapping: alternate terms to canonical keys
-const affiliateSynonyms = {
-    "lolicon": "loli",
-    "Small": "loli",
-    "School": "loli",
-    "Schoolgirl": "loli",
-    "Defloration": "virgin",
-    "Anal": "anal",
-    "Ass": "anal"
-    // Add more: "alt_term": "canonical_term"
-};
-
-function getAffiliateUrls(tag) {
-    if (affiliateLinks[tag]) return affiliateLinks[tag];
-    if (affiliateSynonyms[tag] && affiliateLinks[affiliateSynonyms[tag]]) {
-        return affiliateLinks[affiliateSynonyms[tag]];
-    }
-    return null;
+function getMaxClusters() {
+    return extraPrecisionEnabled ? EXTRA_PRECISION_MAX_CLUSTERS : DEFAULT_MAX_CLUSTERS;
 }
 
 function clamp(val) {
-    return Math.max(1, Math.min(MAX_CLUSTERS, parseInt(val) || 1));
+    return Math.max(1, Math.min(getMaxClusters(), parseInt(val) || 1));
 }
 
-// Initialize the application
+function syncClusterControl(value = currentSearchClusters) {
+    const max = getMaxClusters();
+    const clusterSlider = document.getElementById('clusterSlider');
+    const clusterInput = document.getElementById('clusterInput');
+    const clusterValue = document.getElementById('clusterValue');
+    clusterSlider.max = max;
+    clusterInput.max = max;
+    currentSearchClusters = clamp(value);
+    clusterSlider.value = currentSearchClusters;
+    clusterInput.value = currentSearchClusters;
+    clusterValue.textContent = currentSearchClusters;
+    syncQualitySummary();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    preloadSearchIndex();
     loadDinoModel();
     setupEventListeners();
     initializeUI();
-    preloadImageVectors(); // Preload vectors for faster search
 });
 
-// Initialize UI state
 function initializeUI() {
     updateResultsInfo(0);
-    hideClearButton();
+    toggleClearButton(false);
     setupThresholdControl();
     setupClusterSlider();
+    setupExtraPrecisionToggle();
+    setupSearchQualityControl();
+    loadPostingFormats();
 }
 
-// Setup threshold control with both slider and input field
+function syncQualitySummary() {
+    const level = SEARCH_QUALITY_LEVELS[currentQualityLevel];
+    const label = manualSearchEnabled ? 'Custom' : level.label;
+    document.getElementById('qualityValue').textContent = label;
+    const megabytes = quantizedPostingsReady ? estimateSearchDownloadMB(SEARCH_DATASET.headCount,
+        currentSearchQuantization, currentSearchClusters, meanPostingBytes[currentSearchQuantization]) : 0;
+    const calibrated = !!SEARCH_DOWNLOAD_CALIBRATION[SEARCH_DATASET.headCount];
+    const size = megabytes.toFixed(calibrated ? 2 : 1);
+    const estimateBasis = calibrated ? 'query average' : 'average cluster sizes';
+    document.getElementById('qualityEstimate').textContent = quantizedPostingsReady
+        ? `Estimated ${size} MB per search (${estimateBasis})`
+        : searchSettingsReady ? 'Quality presets are unavailable for this dataset. Use manual settings in Advanced.' : 'Loading search options…';
+    document.getElementById('qualitySlider').setAttribute('aria-valuetext',
+        `${label}${quantizedPostingsReady ? `, estimated ${size} megabytes per search` : ''}`);
+}
+
+function syncSearchMode() {
+    document.getElementById('manualSearchCheckbox').checked = manualSearchEnabled;
+    document.getElementById('qualitySlider').disabled = !quantizedPostingsReady;
+    document.getElementById('quantizationSelect').value = currentSearchQuantization;
+    document.getElementById('quantizationSelect').disabled = !manualSearchEnabled || !quantizedPostingsReady;
+    for (const id of ['clusterSlider', 'clusterInput', 'extraPrecisionCheckbox']) {
+        document.getElementById(id).disabled = !manualSearchEnabled;
+    }
+    syncClusterControl();
+}
+
+function applySearchQuality(value) {
+    const parsed = Number(value);
+    if (!quantizedPostingsReady || !Number.isInteger(parsed) || !SEARCH_QUALITY_LEVELS[parsed]) return;
+    currentQualityLevel = parsed;
+    const level = SEARCH_QUALITY_LEVELS[parsed];
+    manualSearchEnabled = false;
+    currentSearchQuantization = level.quantization;
+    currentSearchClusters = level.clusters;
+    document.getElementById('qualitySlider').value = parsed;
+    syncSearchMode();
+}
+
+function setupSearchQualityControl() {
+    document.getElementById('qualitySlider').addEventListener('input', event => applySearchQuality(event.target.value));
+    document.getElementById('manualSearchCheckbox').addEventListener('change', event => {
+        manualSearchEnabled = event.target.checked || !quantizedPostingsReady;
+        if (manualSearchEnabled) syncSearchMode();
+        else applySearchQuality(currentQualityLevel);
+    });
+    document.getElementById('quantizationSelect').addEventListener('change', event => {
+        if (!manualSearchEnabled || !quantizedPostingsReady || !meanPostingBytes[event.target.value]) return;
+        currentSearchQuantization = event.target.value;
+        syncQualitySummary();
+    });
+    syncSearchMode();
+}
+
+async function loadPostingFormats() {
+    try {
+        // Hosted pages still use the legacy centroid/posting build until the complete dataset is deployed.
+        if (!getSearchRelease() && !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+            throw new Error('The quality presets require the configured local dataset');
+        }
+        const response = await fetch(searchDataUrl('formats'), { cache: 'no-cache' });
+        if (!response.ok) throw new Error(`Search formats unavailable (HTTP ${response.status})`);
+        const manifest = await response.json();
+        if (manifest.schema_version !== 1 || manifest.head_count !== SEARCH_DATASET.headCount || manifest.dimensions !== 384
+            || manifest.centroid_sha256 !== SEARCH_DATASET.centroidSha256) throw new Error('Search dataset differs from the configured release');
+        const averages = {};
+        for (const format of ['fp16', 'lvq6', 'lvq8']) {
+            const entry = manifest.formats?.[format];
+            if (entry?.path !== (format === 'fp16' ? 'clusters' : `clusters_${format}`)
+                || !Array.isArray(entry.gzip_bytes) || entry.gzip_bytes.length !== manifest.head_count
+                || !entry.gzip_bytes.every(size => Number.isSafeInteger(size) && size > 0)) {
+                throw new Error('Incomplete search formats');
+            }
+            averages[format] = entry.gzip_bytes.reduce((total, bytes) => total + bytes, 0) / manifest.head_count;
+        }
+        SEARCH_QUALITY_LEVELS.splice(0, SEARCH_QUALITY_LEVELS.length, ...getSearchQualityLevels(manifest.head_count));
+        meanPostingBytes = averages;
+        quantizedPostingsReady = true;
+        for (const option of document.getElementById('quantizationSelect').options) option.disabled = false;
+        applySearchQuality(currentQualityLevel);
+    } catch (error) {
+        console.warn('Quality presets unavailable; full-precision manual search remains available.', error);
+        manualSearchEnabled = true;
+        currentSearchQuantization = 'fp16';
+        document.getElementById('manualSearchCheckbox').disabled = true;
+        document.getElementById('advancedOptions').open = true;
+    } finally {
+        searchSettingsReady = true;
+        syncSearchMode();
+        updateSearchButtonAvailability();
+    }
+}
+
 function setupThresholdControl() {
     const thresholdSlider = document.getElementById('thresholdSlider');
     const thresholdInput = document.getElementById('thresholdInput');
     const thresholdValue = document.getElementById('thresholdValue');
-    let debounceTimer;
     
-    // Function to update threshold value
     function updateThreshold(value) {
         currentThreshold = Math.max(10, Math.min(100, parseInt(value) || 80));
         thresholdSlider.value = currentThreshold;
@@ -77,89 +171,63 @@ function setupThresholdControl() {
         thresholdValue.textContent = `${currentThreshold}%`;
     }
     
-    // Slider event
-    thresholdSlider.addEventListener('input', (e) => {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-            updateThreshold(e.target.value);
-        }, 100);
-    });
-    
-    // Input field event
-    thresholdInput.addEventListener('input', (e) => {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-            updateThreshold(e.target.value);
-        }, 100);
-    });
-    
-    // Initialize with default value
+    const update = event => updateThreshold(event.target.value);
+    thresholdSlider.addEventListener('input', update);
+    thresholdInput.addEventListener('input', update);
     updateThreshold(80);
 }
 
-// Setup cluster slider
 function setupClusterSlider() {
     const clusterSlider = document.getElementById('clusterSlider');
     const clusterInput = document.getElementById('clusterInput');
-    const clusterValue = document.getElementById('clusterValue');
+    syncClusterControl();
+    const update = event => syncClusterControl(event.target.value);
+    clusterSlider.addEventListener('input', update);
+    clusterInput.addEventListener('input', update);
+}
 
-    clusterSlider.max = MAX_CLUSTERS;
-    clusterInput.max = MAX_CLUSTERS;
-
-    clusterSlider.addEventListener('input', (e) => {
-        currentSearchClusters = clamp(e.target.value);
-        clusterSlider.value = currentSearchClusters;
-        clusterInput.value = currentSearchClusters;
-        clusterValue.textContent = `${currentSearchClusters}`;
+function setupExtraPrecisionToggle() {
+    const checkbox = document.getElementById('extraPrecisionCheckbox');
+    if (!checkbox) return;
+    checkbox.addEventListener('change', (e) => {
+        extraPrecisionEnabled = e.target.checked;
+        syncClusterControl();
     });
-    clusterInput.addEventListener('input', (e) => {
-        currentSearchClusters = clamp(e.target.value);
-        clusterSlider.value = currentSearchClusters;
-        clusterInput.value = currentSearchClusters;
-        clusterValue.textContent = `${currentSearchClusters}`;
-    });
-
-    currentSearchClusters = clamp(10);
 }
 
-// Preload image vectors for faster search
-async function preloadImageVectors() {
-    try {
-        console.log('Preloading image vectors...');
-        await loadImageVectors();
-        console.log('Image vectors preloaded successfully');
-    } catch (error) {
-        console.warn('Failed to preload image vectors:', error);
-    }
-}
-
-// No-op: all cluster vectors are loaded on demand in searchByClusters
-async function loadImageVectors() {
-    return;
-}
-
-// Load DINO model from CDN with better error handling and retry logic
 async function loadDinoModel() {
+    const loadStarted = performance.now();
     const maxRetries = 3;
     let retryCount = 0;
     
     while (retryCount < maxRetries) {
         try {
+            const attemptStarted = performance.now();
             updateStatus('Loading DINO model...', 'loading');
             console.log(`Loading DINO model (attempt ${retryCount + 1}/${maxRetries})`);
             
-            // Load transformers library (v2.17.2, latest available)
-            const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.6.1');
-            console.log('Transformers library loaded');
+            const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0');
+            console.log('[Model] Transformers library loaded', { durationMs: performance.now() - attemptStarted });
             
-            // Use image-feature-extraction pipeline for DINO
-            dinoModel = await pipeline('image-feature-extraction', 'Xenova/dino-vits16');
-            console.log('DINO model loaded with image-feature-extraction pipeline');
+            const modelStarted = performance.now();
+            const model = await pipeline('image-feature-extraction', 'Xenova/dino-vits16', configureDinoInference(env));
+            const modelLoadAndInitMs = performance.now() - modelStarted;
+            profileDinoModel(model);
+            dinoInferenceRuntime = { threads: env.backends.onnx.wasm.numThreads,
+                crossOriginIsolated: globalThis.crossOriginIsolated,
+                hardwareConcurrency: globalThis.navigator?.hardwareConcurrency,
+                userAgent: globalThis.navigator?.userAgent, scriptVersion: '20261117-parallel-startup' };
+            console.log('[Model] CPU inference configured', dinoInferenceRuntime);
+            const warmupStarted = performance.now();
+            dinoModel = await warmDinoModel(model);
+            console.log('[Model] DINO ready', { modelLoadAndInitMs, modelWarmupMs: performance.now() - warmupStarted,
+                totalMs: performance.now() - loadStarted, attempt: retryCount + 1 });
             
-            updateStatus('DINO model loaded! Ready to find SOURCE.', 'success');
-            document.getElementById('searchBtn').disabled = false;
+            updateStatus('DINO model loaded! Ready to search.', 'success');
+            updateSearchButtonAvailability();
             return;
-        } catch (error) {
+        }
+        catch (error) {
             retryCount++;
             console.error(`Error loading DINO model (attempt ${retryCount}):`, error);
             
@@ -167,20 +235,28 @@ async function loadDinoModel() {
                 updateStatus(`Failed to load DINO model after ${maxRetries} attempts. Please refresh the page.`, 'error');
             } else {
                 updateStatus(`Loading failed, retrying... (${retryCount}/${maxRetries})`, 'error');
-                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
+                await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
     }
 }
 
-// Setup event listeners for user interactions
 function setupEventListeners() {
     const uploadArea = document.getElementById('uploadArea');
     const fileInput = document.getElementById('fileInput');
     const searchBtn = document.getElementById('searchBtn');
     const clearBtn = document.getElementById('clearBtn');
 
-    uploadArea.addEventListener('click', () => fileInput.click());
+    uploadArea.addEventListener('click', (event) => {
+        if (event.target !== fileInput) fileInput.click();
+    });
+
+    uploadArea.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            fileInput.click();
+        }
+    });
 
     fileInput.addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
@@ -196,328 +272,432 @@ function setupEventListeners() {
     searchBtn.addEventListener('click', performSearch);
     clearBtn.addEventListener('click', clearAll);
     
-    // Add keyboard shortcuts
     document.addEventListener('keydown', (e) => {
-        if (e.ctrlKey || e.metaKey) {
-            if (e.key === 'Enter' && !searchBtn.disabled) {
-                e.preventDefault();
-                performSearch();
-            }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !searchBtn.disabled) {
+            e.preventDefault();
+            performSearch();
         }
     });
 }
 
-// Handle file selection with better validation and optimization
 function handleFile(file) {
-    // Validate file size (max 10MB)
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
-        updateStatus('File too large. Please select an image smaller than 10MB.', 'error');
+    if (file.size > MAX_IMAGE_BYTES) {
+        updateStatus('File too large. Please select an image of 100 MB or less.', 'error');
         return;
     }
 
-    // Validate file type more strictly
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
         updateStatus('Please select a valid image file (JPG, PNG, GIF, WebP)', 'error');
         return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        imageDataUrl = e.target.result;
+    preloadSearchIndex();
+    imageDataUrl = null;
+    cachedImageEmbedding = null;
+    invalidateSearch();
+    if (selectedObjectUrl) URL.revokeObjectURL(selectedObjectUrl);
+    const selectionVersion = ++imageSelectionVersion;
+    const objectUrl = URL.createObjectURL(file);
+    selectedObjectUrl = objectUrl;
+    updateSearchButtonAvailability();
+    toggleClearButton(true);
+    updateStatus('Loading image...', 'loading');
+    const preview = document.createElement('img');
+    const imageLoadStarted = performance.now();
+    preview.alt = 'Selected image';
+    preview.onload = () => {
+        if (selectionVersion !== imageSelectionVersion) return;
+        console.log('[Image] Selected image loaded', { loadMs: performance.now() - imageLoadStarted,
+            compressedBytes: file.size, width: preview.naturalWidth, height: preview.naturalHeight });
+        imageDataUrl = objectUrl;
         const uploadArea = document.getElementById('uploadArea');
-        uploadArea.innerHTML = `
-            <img src="${imageDataUrl}" alt="Selected image">
-            <input type="file" id="fileInput" accept="image/*" style="display: none;">
-        `;
+        uploadArea.replaceChildren(preview, document.getElementById('fileInput'));
         uploadArea.classList.add('has-image');
-        document.getElementById('searchBtn').disabled = false;
-        showClearButton();
-        updateStatus('Image loaded successfully! Click "Find SOURCE" to search.', 'success');
+        updateSearchButtonAvailability();
+        updateStatus('Image ready. Select Find Source to search.', 'success', 'Image ready.');
     };
-    
-    reader.onerror = () => {
-        updateStatus('Error reading file. Please try again.', 'error');
+    preview.onerror = () => {
+        if (selectionVersion !== imageSelectionVersion) return;
+        URL.revokeObjectURL(objectUrl);
+        selectedObjectUrl = null;
+        updateStatus('Unable to decode this image. Please try another file.', 'error');
     };
-    
-    reader.readAsDataURL(file);
+    preview.src = objectUrl;
 }
 
-// Clear all data and reset UI
+function preloadSearchIndex() {
+    if (searchIndexPreload) return searchIndexPreload;
+    const controller = new AbortController();
+    const pending = prepareSearchIndex(controller.signal);
+    searchIndexPreload = pending;
+    pending.catch(error => {
+        if (searchIndexPreload === pending) searchIndexPreload = null;
+        console.warn('[Index] Image-selection preload failed; search will retry.', error);
+    });
+    return pending;
+}
+
 function clearAll() {
+    cachedImageEmbedding = null;
+    if (selectedObjectUrl) URL.revokeObjectURL(selectedObjectUrl);
+    selectedObjectUrl = null;
+    imageSelectionVersion++;
+    invalidateSearch();
     imageDataUrl = null;
     const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    fileInput.value = '';
     uploadArea.innerHTML = `
-        <div class="upload-icon">📁</div>
+        <span class="upload-icon" aria-hidden="true">📁</span>
         <p class="upload-text">Click to select image</p>
-        <p class="upload-hint">Supports: JPG, PNG, GIF, WebP</p>
-        <input type="file" id="fileInput" accept="image/*" style="display: none;">
+        <p class="upload-hint">JPG, PNG, GIF or WebP · Up to 100&nbsp;MB</p>
     `;
+    uploadArea.appendChild(fileInput);
     uploadArea.classList.remove('has-image');
     document.getElementById('searchBtn').disabled = true;
-    hideClearButton();
+    toggleClearButton(false);
     
-    // Clear results and cache
     const resultsDiv = document.getElementById('results');
+    delete resultsDiv.dataset.progressiveSearch;
     resultsDiv.innerHTML = `
         <div class="placeholder">
-            <div class="placeholder-icon">📄</div>
+            <span class="placeholder-icon" aria-hidden="true">📄</span>
             <div class="placeholder-title">No search performed yet</div>
-            <div class="placeholder-subtitle">Upload an image and click "Find SOURCE" to search</div>
+            <div class="placeholder-subtitle">Upload an image and click &quot;Find Source&quot; to search</div>
         </div>
     `;
     updateResultsInfo(0);
     updateStatus('', '');
 }
 
-// Show/hide clear button
-function showClearButton() {
-    document.getElementById('clearBtn').style.display = 'flex';
+function toggleClearButton(visible) {
+    document.getElementById('clearBtn').style.display = visible ? 'flex' : 'none';
 }
 
-function hideClearButton() {
-    document.getElementById('clearBtn').style.display = 'none';
+function updateSearchButtonAvailability() {
+    document.getElementById('searchBtn').disabled = !imageDataUrl || !dinoModel || !searchSettingsReady;
 }
 
-// Perform the search operation with abort capability and optimization
+function invalidateSearch() {
+    currentSearchAbortController?.abort();
+    currentSearchAbortController = null;
+    resetSearchButton();
+}
+
 function performSearch() {
-    if (!imageDataUrl || !dinoModel) {
-        updateStatus('Please select an image first', 'error');
-        return;
-    }
-    
     if (searchInProgress) {
-        // Abort current search
-        if (currentSearchAbortController) {
-            currentSearchAbortController.abort();
-        }
+        invalidateSearch();
+        updateStatus('Search cancelled.', '');
         return;
     }
-    
-    searchInProgress = true;
-    currentSearchAbortController = new AbortController();
-    
-    updateStatus('Processing image with DINO...', 'loading');
-    document.getElementById('searchBtn').innerHTML = `
-        <span class="btn-icon">⏹️</span>
-        <span class="btn-text">Cancel Search</span>
-    `;
-    
-    // Start timing
-    window._searchStartTime = performance.now();
-    handleSearchResult(imageDataUrl);
-}
-
-// Assumes normalized input vectors
-function computeHash(vector, hyperplanes) {
-  const hash = [];
-  for (let plane of hyperplanes) {
-    let dot = 0;
-    for (let i = 0; i < vector.length; i++) {
-      dot += vector[i] * plane[i];
+    if (!imageDataUrl || !dinoModel || !searchSettingsReady) {
+        updateStatus(!searchSettingsReady ? 'Search options are still loading' : dinoModel ? 'Please select an image first' : 'The model is still loading', 'error');
+        return;
     }
-    hash.push(dot > 0 ? '1' : '0');
-  }
-  return hash.join('');
+    searchInProgress = true;
+    const controller = new AbortController();
+    currentSearchAbortController = controller;
+    document.getElementById('searchBtn').innerHTML = '<svg class="icon" aria-hidden="true"><use href="#icon-stop"/></svg><span class="btn-text">Cancel Search</span>';
+    handleSearchResult(imageDataUrl, controller, {
+        threshold: currentThreshold / 100,
+        clusters: clamp(currentSearchClusters),
+        quantization: currentSearchQuantization
+    });
 }
 
+async function getSearchEmbedding(imageUrl, signal, diagnostics) {
+    if (dinoInferenceRuntime) diagnostics.inferenceRuntime = { ...dinoInferenceRuntime };
+    signal.throwIfAborted();
+    if (cachedImageEmbedding?.url === imageUrl) {
+        console.log(`[Search #${diagnostics.id}] Reusing image embedding`);
+        diagnostics.stages.embeddingCacheHit = 0;
+        return cachedImageEmbedding.vector;
+    }
+    const imageStarted = performance.now();
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+        const cleanup = () => {
+            signal.removeEventListener('abort', abort);
+            img.onload = img.onerror = null;
+        };
+        const abort = () => { cleanup(); img.src = ''; reject(signal.reason); };
+        img.onload = () => { cleanup(); resolve(); };
+        img.onerror = () => { cleanup(); reject(new Error('Failed to load image')); };
+        signal.addEventListener('abort', abort, { once: true });
+        img.src = imageUrl;
+    });
+    signal.throwIfAborted();
+    const decodeStarted = performance.now();
+    // onload alone can leave pixel decoding deferred until drawImage.
+    if (img.decode) await img.decode();
+    signal.throwIfAborted();
+    recordSearchStage(diagnostics, 'imageDecode', decodeStarted, { explicitDecode: Boolean(img.decode) });
+    recordSearchStage(diagnostics, 'imageLoadAndDecode', imageStarted,
+        { width: img.naturalWidth, height: img.naturalHeight });
 
+    const resizeStarted = performance.now();
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 256;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, 256, 256);
+    recordSearchStage(diagnostics, 'imageResize', resizeStarted);
 
-function getBatchIndex(codeId, batchSize = 500) {
-  return Math.floor(codeId / batchSize);
+    const inferenceStarted = performance.now();
+    // Transformers.js accepts canvases directly. Avoiding a PNG data URL skips
+    // lossless encoding, base64 allocation, and decoding the same pixels again.
+    const result = await dinoModel(canvas, { pool: false });
+    const inferenceMs = recordSearchStage(diagnostics, 'modelInference', inferenceStarted);
+    const inferenceTiming = getDinoInferenceTiming(result);
+    if (inferenceTiming) {
+        recordSearchDuration(diagnostics, 'modelPreprocessing', inferenceTiming.processorMs);
+        recordSearchDuration(diagnostics, 'modelExecution', inferenceTiming.modelMs);
+        recordSearchDuration(diagnostics, 'modelPipelineOther', Math.max(0,
+            inferenceMs - inferenceTiming.processorMs - inferenceTiming.modelMs));
+    }
+    signal.throwIfAborted();
+
+    const normalizationStarted = performance.now();
+    // Match hash.py: select the CLS token before normalizing, so L2 routing sees a unit query.
+    const embedding = Array.from(result.data?.slice(0, 384) ?? []);
+    if (embedding.length !== 384 || result.dims?.at(-1) !== 384
+        || !embedding.every(Number.isFinite) || !embedding.some(value => value !== 0)) {
+        throw new Error('DINO model did not return a valid embedding');
+    }
+    const finalEmbedding = l2Normalize(embedding);
+    recordSearchStage(diagnostics, 'queryNormalization', normalizationStarted, { dimensions: finalEmbedding.length });
+    // Cancelled or replaced images must not populate the next search's cache.
+    if (imageDataUrl === imageUrl) cachedImageEmbedding = { url: imageUrl, vector: finalEmbedding };
+    return finalEmbedding;
 }
 
-async function handleSearchResult(imageDataUrl) {
+async function handleSearchResult(imageDataUrl, controller, settings) {
+    const { signal } = controller;
+    const diagnostics = createSearchDiagnostics(settings);
+    console.log(`[Search #${diagnostics.id}] Started`, settings);
+    let outcome = 'cancelled', summary = {};
+    const progressiveResults = createProgressiveResultsRenderer(controller, diagnostics.id);
     try {
         updateStatus('Processing image with DINO...', 'loading');
-
-        // Load the image from data URL
-        const img = new Image();
-        await new Promise((resolve, reject) => {
-            img.onload = () => resolve();
-            img.onerror = () => reject(new Error('Failed to load image'));
-            img.src = imageDataUrl;
-        });
-
-        // Create canvas and resize to 256x256
-        const canvas = document.createElement('canvas');
-        canvas.width = 256;
-        canvas.height = 256;
-        const ctx = canvas.getContext('2d');
-
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-
-        ctx.drawImage(img, 0, 0, 256, 256);
-        console.log('Image resized to 256x256');
-
-        // Get image data
-        const imageData = ctx.getImageData(0, 0, 256, 256);
-        const pixels = imageData.data;
-
-        // Pass image directly to DINO model (processor handles normalization)
-        const result = await dinoModel(canvas.toDataURL('image/png'));
-        console.log('DINO processing completed');
-
-        const embedding = Array.from(result.data ?? []);
-        if (!embedding.length) throw new Error('DINO model did not return a valid embedding');
-
-        // Normalize embedding vector
-        const normalizedEmbedding = l2Normalize(embedding);
-
-        // Ensure vector length 384 with zero padding if needed
-        const finalEmbedding = new Array(384).fill(0);
-        for (let i = 0; i < Math.min(normalizedEmbedding.length, 384); i++) {
-            finalEmbedding[i] = normalizedEmbedding[i];
-        }
-        console.log('Using original embedding with zero padding');
-
+        const finalEmbedding = await getSearchEmbedding(imageDataUrl, signal, diagnostics);
+        signal.throwIfAborted();
         updateStatus('Searching for sources...', 'loading');
 
         const searchStart = performance.now();
-        const { results: similarities, totalCompared, clusterIds } = await searchByClusters(finalEmbedding);
-        const searchElapsed = performance.now() - searchStart;
+        const { results: similarities, totalCompared } = await retrieveSimilarImages(finalEmbedding,
+            { ...settings, signal, diagnostics, onProgress: progressiveResults.update });
+        recordSearchStage(diagnostics, 'searchIncludingIndexWait', searchStart,
+            { totalCompared, matches: similarities.length });
 
-        // Get top result metadata
         let mostLikely = null;
-        
+        let metadataUnavailable = false;
         if (similarities.length > 0) {
-            const topResult = similarities[0];
-            const code = topResult.code;
-            const batch_Id = getBatchIndex(code)
-            const metadata = await fetchClusterMetaBinary(`meta/meta_${batch_Id}.bin.gz`);
-            const match = metadata.find(m => m.code === topResult.code);
-            if (match) {
-                mostLikely = { ...match, similarity: topResult.similarity, code: match.code, page: match.page };
+            const metadataStarted = performance.now();
+            try {
+                const topResult = similarities[0];
+                const metadata = await fetchClusterMetaBinary(searchDataUrl('meta', topResult.code), signal, diagnostics);
+                const match = metadata.find(m => m.code === topResult.code);
+                if (match) mostLikely = { ...match, similarity: topResult.similarity, code: match.code, page: topResult.page };
+            } catch (error) {
+                signal.throwIfAborted();
+                metadataUnavailable = true;
+                console.warn(`[Search #${diagnostics.id}] Match details could not be loaded:`, error);
+            } finally {
+                recordSearchStage(diagnostics, 'metadata', metadataStarted, { unavailable: metadataUnavailable });
             }
         }
-	
-	
-        await displayResults(similarities, mostLikely);
-        updateStatus(`Search completed! Found ${similarities.length} sources (compared against ${totalCompared} images) in ${(searchElapsed/1000).toFixed(2)}s.`, 'success');
-        resetSearchButton();
-
+        signal.throwIfAborted();
+        await progressiveResults.finish();
+        signal.throwIfAborted();
+        const renderStarted = performance.now();
+        displayResults(similarities, mostLikely);
+        recordSearchStage(diagnostics, 'renderResults', renderStarted);
+        // Report the full search through result rendering, using the same
+        // snapshot for the visible duration and the completed console summary.
+        const totalMs = performance.now() - diagnostics.startedAt;
+        updateStatus(`Search completed! Found ${similarities.length} sources in ${(totalMs/1000).toFixed(2)}s.${metadataUnavailable ? ' Match details are unavailable; source links are shown below.' : ''}`, 'success');
+        outcome = 'completed';
+        summary = { totalMs, totalCompared, matches: similarities.length, metadataUnavailable };
     } catch (error) {
-        console.error('Search error:', error);
-        updateStatus(`Search error: ${error.message}`, 'error');
-        resetSearchButton();
+        progressiveResults.cancel();
+        if (!signal.aborted) {
+            outcome = 'failed';
+            summary = { error: error.message };
+            console.error(`[Search #${diagnostics.id}] Search error:`, error);
+            updateStatus(`Search error: ${error.message}`, 'error');
+            controller.abort();
+        }
+    } finally {
+        finishSearchDiagnostics(diagnostics, outcome, summary);
+        if (currentSearchAbortController === controller) resetSearchButton();
     }
 }
 
+function createProgressiveResultsRenderer(controller, searchId) {
+    const resultsDiv = document.getElementById('results');
+    const resultsInfo = document.getElementById('resultsInfo');
+    const resultsCount = document.getElementById('resultsCount');
+    let frame = 0, latest = null, previousNodes = null, previousCount = '';
+    let previousInfoDisplay = '', progressive = null, list = null, progressLabel = null, empty = null;
+    let linkInteractionInProgress = false;
 
-// Reset search button to normal state
+    function ownsResults() {
+        return resultsDiv.dataset.progressiveSearch === String(searchId);
+    }
+
+    function schedulePaint() {
+        if (latest && !frame && !linkInteractionInProgress) frame = requestAnimationFrame(paint);
+    }
+
+    function beginLinkInteraction(event) {
+        if (event.target.closest?.('a')) linkInteractionInProgress = true;
+    }
+
+    function endLinkInteraction() {
+        if (!linkInteractionInProgress) return;
+        linkInteractionInProgress = false;
+        // The click generated by pointerup/keyup runs before this animation
+        // frame, so an active anchor is never detached mid-activation.
+        schedulePaint();
+    }
+
+    function removeInteractionListeners() {
+        resultsDiv.removeEventListener('pointerdown', beginLinkInteraction);
+        resultsDiv.removeEventListener('keydown', beginLinkInteraction);
+        window.removeEventListener('pointerup', endLinkInteraction);
+        window.removeEventListener('pointercancel', endLinkInteraction);
+        window.removeEventListener('keyup', endLinkInteraction);
+    }
+
+    resultsDiv.addEventListener('pointerdown', beginLinkInteraction);
+    resultsDiv.addEventListener('keydown', beginLinkInteraction);
+    window.addEventListener('pointerup', endLinkInteraction);
+    window.addEventListener('pointercancel', endLinkInteraction);
+    window.addEventListener('keyup', endLinkInteraction);
+
+    function ensureProgressiveResults() {
+        if (progressive) return;
+        previousNodes = Array.from(resultsDiv.childNodes);
+        previousCount = resultsCount.textContent;
+        previousInfoDisplay = resultsInfo.style.display;
+        progressive = document.createElement('div');
+        progressive.className = 'progressive-results';
+        progressLabel = document.createElement('p');
+        progressLabel.className = 'progressive-results-label';
+        progressLabel.append('Top matches so far ', document.createElement('span'));
+        list = document.createElement('div');
+        list.className = 'results-list progressive-results-list';
+        empty = document.createElement('p');
+        empty.className = 'progressive-results-empty';
+        empty.textContent = 'No matches above the threshold yet.';
+        progressive.append(progressLabel, list, empty);
+        resultsDiv.dataset.progressiveSearch = String(searchId);
+        resultsDiv.replaceChildren(progressive);
+    }
+
+    function paint() {
+        frame = 0;
+        if (!latest || linkInteractionInProgress || controller.signal.aborted
+            || currentSearchAbortController !== controller) return;
+        ensureProgressiveResults();
+        const { results, completedClusters, totalClusters } = latest;
+        progressLabel.lastElementChild.textContent = `${completedClusters} of ${totalClusters} clusters searched`;
+        const visibleResults = results.slice(0, 10);
+        const existing = new Map(Array.from(list.children,
+            node => [node.dataset.resultKey, node]));
+        for (let index = 0; index < visibleResults.length; index++) {
+            const item = visibleResults[index];
+            const key = `${item.code}:${item.page}`;
+            let node = existing.get(key);
+            if (!node) {
+                node = createResultItem(item, index + 1);
+                node.dataset.resultKey = key;
+            } else {
+                const rank = node.querySelector('.result-rank');
+                rank.textContent = `#${index + 1}`;
+                rank.setAttribute('aria-label', `Match ${index + 1}`);
+                existing.delete(key);
+            }
+            const position = list.children[index];
+            if (position !== node) list.insertBefore(node, position || null);
+        }
+        for (const node of existing.values()) node.remove();
+        list.hidden = visibleResults.length === 0;
+        empty.hidden = visibleResults.length !== 0;
+        updateResultsInfo(results.length);
+        updateStatus(`Searching for sources... ${completedClusters} of ${totalClusters} clusters searched.`, 'loading');
+    }
+
+    return {
+        update(progress) {
+            if (controller.signal.aborted || currentSearchAbortController !== controller) return;
+            latest = progress;
+            schedulePaint();
+        },
+        async finish() {
+            if (frame) cancelAnimationFrame(frame);
+            frame = 0;
+            if (linkInteractionInProgress) {
+                await new Promise(resolve => {
+                    const done = () => {
+                        controller.signal.removeEventListener('abort', done);
+                        window.removeEventListener('pointerup', done);
+                        window.removeEventListener('pointercancel', done);
+                        window.removeEventListener('keyup', done);
+                        resolve();
+                    };
+                    controller.signal.addEventListener('abort', done, { once: true });
+                    window.addEventListener('pointerup', done, { once: true });
+                    window.addEventListener('pointercancel', done, { once: true });
+                    window.addEventListener('keyup', done, { once: true });
+                });
+            }
+            if (frame) cancelAnimationFrame(frame);
+            frame = 0;
+            removeInteractionListeners();
+            if (ownsResults()) delete resultsDiv.dataset.progressiveSearch;
+        },
+        cancel() {
+            if (frame) cancelAnimationFrame(frame);
+            frame = 0;
+            removeInteractionListeners();
+            if (ownsResults() && previousNodes) {
+                resultsDiv.replaceChildren(...previousNodes);
+                resultsCount.textContent = previousCount;
+                resultsInfo.style.display = previousInfoDisplay;
+                delete resultsDiv.dataset.progressiveSearch;
+            }
+        }
+    };
+}
+
+
 function resetSearchButton() {
     searchInProgress = false;
     currentSearchAbortController = null;
     document.getElementById('searchBtn').innerHTML = `
-        <span class="btn-text">Find SOURCE</span>
+        <svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><span class="btn-text">Find Source</span>
     `;
-    document.getElementById('searchBtn').disabled = false;
+    updateSearchButtonAvailability();
 }
 
-// L2 normalization for embedding vectors (optimized)
-function l2Normalize(vec) {
-    const norm = Math.sqrt(vec.reduce((sum, x) => sum + x * x, 0));
-    if (norm === 0) return vec.map(() => 0);
-    return vec.map(x => x / norm);
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
 }
 
-// Validate vector format
-function isValidVector(vector) {
-    return Array.isArray(vector) && vector.every(x => typeof x === 'number' && !isNaN(x));
-}
-
-// Calculate similarities with simple, straightforward approach
-function calculateSimilarities(queryEmbedding, imageVectors) {
-    const t0 = performance.now();
-    const similarities = [];
-    const threshold = currentThreshold / 100;
-    if (!Array.isArray(imageVectors)) return similarities;
-    
-    // Normalize query embedding
-    const queryNorm = l2Normalize(queryEmbedding);
-    const queryArr = new Float32Array(queryNorm);
-    
-    for (let index = 0; index < imageVectors.length; index++) {
-        const item = imageVectors[index];
-        if (!item || !Array.isArray(item.vector) || typeof item.vector[0] !== 'number') continue;
-        
-        // Normalize item vector
-        const itemNorm = l2Normalize(item.vector);
-        const vectorArr = new Float32Array(itemNorm);
-        
-        // Calculate cosine similarity (dot product of normalized vectors)
-        let dotProduct = 0;
-        for (let i = 0; i < queryArr.length; i += 4) {
-            dotProduct += queryArr[i] * vectorArr[i]
-                + (queryArr[i+1] || 0) * (vectorArr[i+1] || 0)
-                + (queryArr[i+2] || 0) * (vectorArr[i+2] || 0)
-                + (queryArr[i+3] || 0) * (vectorArr[i+3] || 0);
-        }
-        
-        if (index < 5) {
-            console.log(`Item ${index}: similarity = ${dotProduct.toFixed(4)}`);
-        }
-        
-        if (dotProduct > threshold) {
-            similarities.push({
-                index,
-                similarity: dotProduct,
-                code: item.code || `Item_${index + 1}`,
-                page: item.page || '01'
-            });
-        }
-    }
-    similarities.sort((a, b) => b.similarity - a.similarity);
-    const t1 = performance.now();
-    console.log(`[Timing] calculateSimilarities: ${(t1-t0).toFixed(2)} ms for ${imageVectors.length} vectors`);
-    return similarities.slice(0, 50);
-}
-
-
-// Function to generate affiliate links HTML
-function generateAffiliateLinks(tags, chars) {
-    const items = [...tags, ...chars];
-    const links = [];
-    items.forEach(item => {
-        const urls = getAffiliateUrls(item);
-        if (urls) {
-            urls.forEach((url, idx) => {
-                // Extract domain for tooltip
-                let domain = '';
-                try { domain = new URL(url).hostname.replace('www.', ''); } catch {}
-                links.push(
-                    `<a href="${url}" target="_blank" class="btn btn-secondary" style="margin: 6px 8px 0 0; display:inline-block; font-size:1.08em; padding: 16px 22px; border-radius: 18px; box-shadow: 0 2px 8px #ffd70033; position:relative;"
-                        title="Shop for ${item} on ${domain}">
-                        <span style="font-size:1.25em; margin-right:7px; vertical-align:middle;">🛒</span>
-                        <span style="font-weight:600; letter-spacing:0.01em;">Discover ${item}${urls.length > 1 ? ` #${idx+1}` : ''} Deals</span>
-                        <span style="font-size:0.95em; color:#ffd700; margin-left:8px; vertical-align:middle;">→</span>
-                    </a>`
-                );
-            });
-        }
-    });
-    if (links.length === 0) return '';
-    return `<div style="margin-top:18px;"><div style="font-weight:700; color:#b8860b; margin-bottom:15px; font-size:1.13em; letter-spacing:0.01em; text-align:center; display:block; width:100%;">🔥 Hot Affiliate Offers:</div><div style="text-align:center;">${links.join('')}</div></div>`;
-}
-
-function binaryStringToBytes(binaryStr) {
-  const bytes = new Uint8Array(binaryStr.length);
-  for (let i = 0; i < binaryStr.length; i++) {
-    bytes[i] = binaryStr.charCodeAt(i) & 0xff; // mask to byte
-  }
-  return bytes;
-  
-  const blob = new Blob([bytes], { type: mimeType });
-  return URL.createObjectURL(blob);
-}
-
-
-// Display search results in the UI with better formatting
-async function displayResults(similarities, mostLikely) {
+function displayResults(similarities, mostLikely) {
     const resultsDiv = document.getElementById('results');
+    delete resultsDiv.dataset.progressiveSearch;
     resultsDiv.innerHTML = '';
+    if (similarities.length === 0) {
+        const empty = document.createElement('p');
+        empty.textContent = 'No matching sources found. Try lowering the similarity threshold or searching more clusters.';
+        resultsDiv.appendChild(empty);
+    }
 
     if (mostLikely) 
     {
@@ -528,78 +708,60 @@ const thumbnailSrc = `data:image/webp;base64,${mostLikely.thumbnail}`;
 
 likelyDiv.innerHTML = `
     <div class="most-likely-header">
-        <span class="most-likely-crown">👑</span> Most Likely Match
+        <span aria-hidden="true">👑</span> Most Likely Match
     </div>
     <div class="most-likely-flex">
         <div class="most-likely-thumb-col">
-            <img src="${thumbnailSrc}" alt="Thumbnail" class="most-likely-thumbnail-large">
+            <img src="${escapeHtml(thumbnailSrc)}" alt="Thumbnail" class="most-likely-thumbnail-large">
         </div>
         <div class="most-likely-details-col">
-            <div class="most-likely-detail-row"><span class="ml-label">Name:</span> <span class="ml-value">${mostLikely.name}</span></div>
+            <div class="most-likely-detail-row"><span class="ml-label">Name:</span> <span class="ml-value">${escapeHtml(mostLikely.name)}</span></div>
             <div class="most-likely-detail-row"><span class="ml-label">Code:</span> <span class="ml-value">${mostLikely.code}</span></div>
             <div class="most-likely-detail-row">
                 <span class="ml-label">Link:</span> 
                 <span class="ml-value">
-                    <a href="https://nhentai.to/g/${mostLikely.code}/" target="_blank" rel="noopener noreferrer">
-                        www.nhentai.to/g/${mostLikely.code}
+                    <a href="https://nhentai.net/g/${mostLikely.code}/" target="_blank" rel="noopener noreferrer">
+                        www.nhentai.net/g/${mostLikely.code}
                     </a>
                 </span>
             </div>
-            <div class="most-likely-detail-row"><span class="ml-label">Top tags:</span> <span class="ml-value">${mostLikely.top_tags.join(', ')}</span></div>
-            <div class="most-likely-detail-row"><span class="ml-label">Top Characters:</span> <span class="ml-value">${mostLikely.top_chars.join(', ')}</span></div>
+            <div class="most-likely-detail-row"><span class="ml-label">Tags:</span> <span class="ml-value">${escapeHtml(mostLikely.top_tags.join(', '))}</span></div>
+            <div class="most-likely-detail-row"><span class="ml-label">Characters:</span> <span class="ml-value">${escapeHtml(mostLikely.top_chars.join(', '))}</span></div>
             <div class="most-likely-detail-row"><span class="ml-label">Similarity:</span> <span class="ml-value">${(mostLikely.similarity * 100).toFixed(1)}%</span></div>
         </div>
     </div>
-    ${generateAffiliateLinks(mostLikely.top_tags, mostLikely.top_chars)}
 `;
 
 resultsDiv.appendChild(likelyDiv);
     }
 
-    // Hide and make expandable the list of other results
     if (similarities.length > 0) {
+        const alternativeResults = mostLikely ? similarities.slice(1) : similarities;
+        if (alternativeResults.length === 0) {
+            updateResultsInfo(similarities.length);
+            return;
+        }
+
         const expandableContainer = document.createElement('div');
         expandableContainer.className = 'expandable-results';
-        expandableContainer.style.marginTop = '16px';
         const toggleBtn = document.createElement('button');
-        toggleBtn.textContent = 'Show All Results';
+        toggleBtn.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#icon-list"/></svg><span>Show ${alternativeResults.length} more matches</span>`;
         toggleBtn.className = 'expand-btn';
+        toggleBtn.setAttribute('aria-expanded', 'false');
         let expanded = false;
         const resultsContainer = document.createElement('div');
         resultsContainer.className = 'results-list';
         resultsContainer.style.display = 'none';
 
-	similarities.forEach((item, index) => {
-	  const resultItem = document.createElement('div');
-	  resultItem.className = 'result-item';
-	  const url = `https://nhentai.to/g/${item.code}/${item.page}`;
-	  resultItem.innerHTML = `
-	    <div class="result-info" style="
-	      display: flex; 
-	      align-items: center; 
-	      justify-content: space-between; 
-	      padding: 8px; 
-	      max-width: 600px;">
-	      
-	      <div class="result-details" style="display: flex; flex-direction: column; gap: 4px;">
-		<div class="result-code">Code: ${item.code}</div>
-		<div class="result-page">Page: ${item.page}</div>
-		<div class="similarity">Similarity: ${(item.similarity * 100).toFixed(1)}%</div>
-	      </div>
-	      
-	      <a href="${url}" target="_blank" rel="noopener noreferrer" 
-		 style="margin-left: 16px; font-size: 1.1em; font-weight: 600; color: #1a0dab; text-decoration: underline; white-space: nowrap;">
-		${url}
-	      </a>
-	    </div>
-	  `;
-	  resultsContainer.appendChild(resultItem);
-	});
+        alternativeResults.forEach((item, index) => resultsContainer.appendChild(createResultItem(item, index + (mostLikely ? 2 : 1))));
 
         toggleBtn.onclick = () => {
             expanded = !expanded;
+            toggleBtn.setAttribute('aria-expanded', String(expanded));
             resultsContainer.style.display = expanded ? 'block' : 'none';
-            toggleBtn.textContent = expanded ? 'Hide All Results' : 'Show All Results';
+            toggleBtn.innerHTML = expanded
+                ? '<svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg><span>Hide additional matches</span>'
+                : `<svg class="icon" aria-hidden="true"><use href="#icon-list"/></svg><span>Show ${alternativeResults.length} more matches</span>`;
         };
 
         expandableContainer.appendChild(toggleBtn);
@@ -610,7 +772,23 @@ resultsDiv.appendChild(likelyDiv);
     updateResultsInfo(similarities.length);
 }
 
-// Update results info display
+function createResultItem(item, rank) {
+    const resultItem = document.createElement('article');
+    const score = item.similarity * 100;
+    const tone = score >= 90 ? 'excellent' : score >= 80 ? 'strong' : 'close';
+    const url = `https://nhentai.net/g/${item.code}/${item.page}`;
+    resultItem.className = `result-item result-item--${tone}`;
+    resultItem.innerHTML = `
+        <div class="result-rank" aria-label="Match ${rank}">#${rank}</div>
+        <div class="result-details">
+            <div class="result-code">${item.code}</div>
+            <div class="result-meta"><span>Page ${item.page}</span><span class="similarity">${score.toFixed(1)}% similar</span></div>
+        </div>
+        <a href="${url}" target="_blank" rel="noopener noreferrer" class="result-link" aria-label="Open source ${item.code}, page ${item.page}"><span>Open</span><svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a>
+    `;
+    return resultItem;
+}
+
 function updateResultsInfo(count) {
     const resultsInfo = document.getElementById('resultsInfo');
     const resultsCount = document.getElementById('resultsCount');
@@ -623,273 +801,18 @@ function updateResultsInfo(count) {
     }
 }
 
-// Update status messages in the UI
-function updateStatus(message, type) {
+function updateStatus(message, type, boldPrefix = '') {
     const statusDiv = document.getElementById('status');
     if (message) {
         statusDiv.innerText = message;
+        if (boldPrefix && message.startsWith(boldPrefix)) {
+            const emphasis = document.createElement('strong');
+            emphasis.textContent = boldPrefix;
+            statusDiv.replaceChildren(emphasis, message.slice(boldPrefix.length));
+        }
         statusDiv.className = `status ${type}`;
         statusDiv.style.display = 'block';
     } else {
         statusDiv.style.display = 'none';
     }
-}
-
-// Add dot product helper for lshSearch
-function dot(a, b) {
-    let sum = 0;
-    for (let i = 0; i < a.length; i++) sum += a[i] * b[i];
-    return sum;
-}
-
-// Helper to fetch and decompress gzip JSON, with fallback to .json if .json.gz fails
-async function fetchGzippedJsonWithFallback(url) {
-    try {
-        // Try .json.gz first
-        return await fetchGzippedJson(url + '.gz');
-    } catch (e) {
-        // If .json.gz fails, try .json (assume it's still gzipped)
-        try {
-            return await fetchGzippedJson(url);
-        } catch (e2) {
-            throw new Error(`Failed to fetch ${url}.gz or ${url}`);
-        }
-    }
-}
-
-// Web worker for parallel gzip decompression
-const decompressWorkerBlob = new Blob([`
-    self.onmessage = function(e) {
-        importScripts('https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js');
-        const { buffer } = e.data;
-        try {
-            const decompressed = self.pako.ungzip(new Uint8Array(buffer), { to: 'string' });
-            self.postMessage({ result: decompressed });
-        } catch (err) {
-            self.postMessage({ error: err.message });
-        }
-    };
-`], { type: 'application/javascript' });
-const decompressWorkerUrl = URL.createObjectURL(decompressWorkerBlob);
-
-function decompressGzipParallel(buffer) {
-    return new Promise((resolve, reject) => {
-        const worker = new Worker(decompressWorkerUrl);
-        worker.onmessage = function(e) {
-            if (e.data.result) {
-                resolve(e.data.result);
-            } else {
-                reject(new Error(e.data.error));
-            }
-            worker.terminate();
-        };
-        worker.postMessage({ buffer }, [buffer]);
-    });
-}
-
-// Helper to fetch and decompress gzip JSON using parallel worker
-async function fetchGzippedJson(url) {
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Failed to fetch ${url}`);
-    const buffer = await resp.arrayBuffer();
-    const decompressed = await decompressGzipParallel(buffer);
-    return JSON.parse(decompressed);
-}
-
-async function fetchClusterBinary_new(url, vectorLength = 384) {
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Failed to fetch ${url}`);
-
-    // Read compressed bytes
-    const compressed = new Uint8Array(await resp.arrayBuffer());
-
-    // Decompress gzip -> Uint8Array
-    const decompressed = pako.ungzip(compressed);
-
-    // Prepare to parse binary data
-    const buffer = decompressed.buffer;
-    const entrySize = 4 + 2 + 2 * vectorLength; // int32 + int16 + float16
-    const count = buffer.byteLength / entrySize;
-    const view = new DataView(buffer);
-    const result = [];
-
-    for (let i = 0; i < count; i++) {
-        const offset = i * entrySize;
-        const code = view.getInt32(offset, true);
-        const page = view.getInt16(offset + 4, true);
-
-        const vectorBytes = buffer.slice(offset + 6, offset + 6 + 2 * vectorLength);
-        const f16Array = new Float16Array(vectorBytes);
-        const vector = new Float32Array(f16Array);
-
-        result.push({ code, page, vector: Array.from(vector) });
-    }
-    return result;
-}
-
-
-// Helper to fetch and parse binary cluster files
-async function fetchClusterBinary(url, vectorLength = 384) {
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Failed to fetch ${url}`);
-    const buffer = await resp.arrayBuffer();
-    const entrySize = 4 + 2 + 2 * vectorLength; // code (int32) + page (int16) + vector (float16)
-    const count = buffer.byteLength / entrySize;
-    const view = new DataView(buffer);
-    const result = [];
-    for (let i = 0; i < count; i++) {
-        const offset = i * entrySize;
-        const code = view.getInt32(offset, true);
-        const page = view.getInt16(offset + 4, true);
-        // Use float16 library to decode vector
-        const vectorBytes = buffer.slice(offset + 6, offset + 6 + 2 * vectorLength);
-        // Convert float16 bytes to Float32Array using @petamoriken/float16
-        const f16Array = new Float16Array(vectorBytes);
-        const vector = new Float32Array(f16Array);
-        result.push({ code, page, vector: Array.from(vector) });
-    }
-    return result;
-}
-
-
-// Helper to fetch and parse binary centroids file
-async function fetchCentroidsBinary(url, vectorLength = 384) {
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Failed to fetch ${url}`);
-    const buffer = await resp.arrayBuffer();
-    const entrySize = 2 * vectorLength; // 512 x float16
-    const count = buffer.byteLength / entrySize;
-    const result = [];
-    for (let i = 0; i < count; i++) {
-        const offset = i * entrySize;
-        // Convert float16 bytes to Float32Array using @petamoriken/float16
-        const f16Array = new Float16Array(buffer.slice(offset, offset + entrySize));
-        const vector = new Float32Array(f16Array);
-        result.push({ id: i, vector: Array.from(vector) });
-    }
-    return result;
-}
-
-async function fetchClusterMetaBinary(url) {
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`Failed to fetch ${url}`);
-  const compressedBuffer = await resp.arrayBuffer();
-
-  // Decompress gzip using pako
-  const decompressed = pako.ungzip(new Uint8Array(compressedBuffer));
-
-  // decompressed is a Uint8Array - convert to ArrayBuffer if needed
-  const buffer = decompressed.buffer;
-
-  // Now parse the decompressed buffer using your existing parser function:
-  return parseClusterMetaBinary(buffer);
-}
-
-
-// Helper to fetch and parse binary cluster metadata (TLV format)
-async function parseClusterMetaBinary(buffer) {
-    const view = new DataView(buffer);
-    let offset = 0;
-    const result = [];
-    while (offset < buffer.byteLength) {
-        // code (int32)
-        const code = view.getInt32(offset, true);
-        offset += 4;
-        // name (uint16 len + utf8)
-        const nameLen = view.getUint16(offset, true);
-        offset += 2;
-        const name = new TextDecoder().decode(new Uint8Array(buffer, offset, nameLen));
-        offset += nameLen;
-        // top_tags (uint8 count, then each: uint16 len + utf8)
-        const tagCount = view.getUint8(offset);
-        offset += 1;
-        const top_tags = [];
-        for (let i = 0; i < tagCount; i++) {
-            const tagLen = view.getUint16(offset, true);
-            offset += 2;
-            const tag = new TextDecoder().decode(new Uint8Array(buffer, offset, tagLen));
-            offset += tagLen;
-            top_tags.push(tag);
-        }
-        // top_chars (uint8 count, then each: uint16 len + utf8)
-        const charCount = view.getUint8(offset);
-        offset += 1;
-        const top_chars = [];
-        for (let i = 0; i < charCount; i++) {
-            const charLen = view.getUint16(offset, true);
-            offset += 2;
-            const char = new TextDecoder().decode(new Uint8Array(buffer, offset, charLen));
-            offset += charLen;
-            top_chars.push(char);
-        }
-        // thumbnail (uint32 len + utf8)
-        const thumbLen = view.getUint32(offset, true);
-        offset += 4;
-        const thumbnail = new TextDecoder().decode(new Uint8Array(buffer, offset, thumbLen));
-        offset += thumbLen;
-        result.push({ code, name, top_tags, top_chars, thumbnail });
-    }
-    return result;
-}
-
-// Main cluster-based search function
-async function searchByClusters(queryEmbedding) {
-    // 1. Load centroids
-    const t0 = performance.now();
-    const centroids = await fetchCentroidsBinary('clusters/centroids.bin'); // [{id, vector}]
-    const t1 = performance.now();
-    console.log(`[Timing] Centroids fetch+decompress: ${(t1-t0).toFixed(2)} ms`);
-
-    // Dynamically update cluster slider max
-    const clusterSlider = document.getElementById('clusterSlider');
-    const clusterInput = document.getElementById('clusterInput');
-    if (clusterSlider && clusterInput) {
-        clusterSlider.max = MAX_CLUSTERS;
-        clusterInput.max = MAX_CLUSTERS;
-        currentSearchClusters = clamp(currentSearchClusters);
-        clusterSlider.value = currentSearchClusters;
-        clusterInput.value = currentSearchClusters;
-        document.getElementById('clusterValue').textContent = `${currentSearchClusters}`;
-    }
-
-    // 2. Find top N closest centroids
-    const centroidScores = centroids.map((c, idx) => ({
-        id: c.id,
-        idx,
-        score: dot(queryEmbedding, c.vector)
-    }));
-    centroidScores.sort((a, b) => b.score - a.score);
-    // Final clamp before using
-    const topCentroids = centroidScores.slice(0, clamp(currentSearchClusters));
-    const clusterIds = topCentroids.map(c => c.id);
-
-    // 3. For each centroid, load its cluster JSON and search (in parallel)
-    // Also count total images in each cluster
-    let totalCompared = 0;
-    const clusterPromises = topCentroids.map(async (centroid) => {
-        const tFetch0 = performance.now();
-        const clusterResp = await fetchClusterBinary_new(`clusters/clusters/cluster_${centroid.id}.bin.gz`); // [{vector, code, page}]
-        const tFetch1 = performance.now();
-        console.log(`[Timing] Cluster ${centroid.id} fetch+decompress: ${(tFetch1-tFetch0).toFixed(2)} ms`);
-        totalCompared += clusterResp.length;
-        // Search this cluster
-        // Add clusterId to each result
-        const tSearch0 = performance.now();
-        const results = calculateSimilarities(queryEmbedding, clusterResp).map(r => ({
-            ...r,
-            clusterId: centroid.id
-        }));
-        const tSearch1 = performance.now();
-        console.log(`[Timing] Cluster ${centroid.id} search: ${(tSearch1-tSearch0).toFixed(2)} ms`);
-        return results;
-    });
-    const tClusters0 = performance.now();
-    const clusterResults = await Promise.all(clusterPromises); // Array of arrays
-    const tClusters1 = performance.now();
-    console.log(`[Timing] All clusters fetch+decompress+search: ${(tClusters1-tClusters0).toFixed(2)} ms`);
-
-    // 4. Combine all results and keep top 50
-    const allResults = clusterResults.flat();
-    allResults.sort((a, b) => b.similarity - a.similarity);
-    return { results: allResults.slice(0, 50), totalCompared, clusterIds };
 }
