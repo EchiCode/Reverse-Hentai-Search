@@ -1,0 +1,12 @@
+{
+  "name": "reverse-hentai-search",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.9",
+    "html-minifier-terser": "7.2.0"
+  }
+}

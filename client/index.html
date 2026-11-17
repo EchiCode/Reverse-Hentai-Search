@@ -5,178 +5,114 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Reverse Hentai Search - Find SOURCE</title>
     <meta name="description" content="Find the source of hentai images using advanced AI">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2324292e'/%3E%3Ccircle cx='27' cy='27' r='15' fill='none' stroke='white' stroke-width='6'/%3E%3Cpath d='M38 38L53 53' stroke='white' stroke-width='7' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="stylesheet" href="styles.css?v=20261110-budget-quantization">
 </head>
 <body>
-    <!-- Header -->
-<!-- Header -->
-<section style="max-width: 1200px; margin: 0 auto; padding: 2rem 1rem;">
-	
-  <!-- Title and Tagline -->
-  <div style="text-align: center;">
-    <h1 style="font-size: 2.75rem; font-weight: bold;">
-      🔍 Reverse Hentai Image Search
-    </h1>
-    <p style="font-size: 1.5rem; color: #555;">
-      Fully client-side. Private. Fast.
-    </p>
-    <p style="font-size: 1.25rem; color: #888;">
-      Now indexing <strong>100,000 galleries</strong> — right in your browser.
-    </p>
-  </div>
-
-	<div style="display: flex; justify-content: flex-start; margin: -4.5rem -9.5rem 0rem;">
-        	<a href="https://github.com/sponsors/echi-code" target="_blank" rel="noopener">
-    		<img src="https://img.shields.io/badge/Sponsor-GitHub-%23ea4aaa?logo=githubsponsors&style=for-the-badge" alt="GitHub Sponsors">
-  		</a>
+    <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+        <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+        <symbol id="icon-clear" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6m4-6v6"/></symbol>
+        <symbol id="icon-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></symbol>
+        <symbol id="icon-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+        <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
+        <symbol id="icon-external" viewBox="0 0 24 24"><path d="M14 3h7v7m0-7L10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/></symbol>
+    </defs></svg>
+    <a class="skip-link" href="#main-layout">Skip to search</a>
+    <header class="site-header">
+        <div class="header-inner">
+            <div class="header-copy">
+                <h1>🔍 Reverse Hentai Image Search</h1>
+                <p class="tagline">Fully client-side. Private. Fast.</p>
+                <p class="archive-description">Indexing <strong>~656k nhentai galleries</strong>, right in your browser.</p>
             </div>
-            <div style="display: flex;  justify-content: flex-start; margin: -0.125rem -9.5rem 0rem;">
-                <a href="https://github.com/echicode/reverse-hentai-search" 
-                   target="_blank" 
-                   rel="noopener" 
-                   style="display: inline-flex; align-items: center; background: #24292e; padding: 10px 16px; border-radius: 6px; text-decoration: none;">
-                  <img src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" 
-                       alt="GitHub" 
-                       style="width: 24px; height: 24px; margin-right: 8px;">
-                  <span style="color: white; font-weight: 600;">Source Code</span>
-                </a>
-              </div>
+            <nav class="header-links" aria-label="Project links">
+                <div class="header-left">
+                    <a class="email-link" href="mailto:echicode@gmail.com"><img class="service-icon" src="assets/email.png" width="24" height="24" alt=""><span>Email Me</span></a>
+                    <a class="sponsor-link sponsor-badge" href="https://github.com/sponsors/echi-code" target="_blank" rel="noopener noreferrer"><img src="assets/github-sponsors.svg" width="165" height="28" alt="Sponsor on GitHub"></a>
+                    <a class="source-link" href="https://github.com/echicode/reverse-hentai-search" target="_blank" rel="noopener noreferrer"><img class="service-icon github-icon" src="assets/github-mark.png" width="24" height="24" alt=""><span>Source Code</span></a>
+                </div>
+                <div class="header-right">
+                    <a class="support-link" href="https://buymeacoffee.com/echicode" target="_blank" rel="noopener noreferrer"><img class="service-icon" src="assets/buy-me-a-coffee.svg" width="24" height="24" alt=""><span>Buy me a coffee</span></a>
+                </div>
+            </nav>
         </div>
-  <!-- Support button aligned right -->
-  <div style="display: flex; justify-content: flex-end; margin: -5rem -16rem 0rem;">
-    <a href="https://buymeacoffee.com/echicode" target="_blank" rel="noopener" class="bmc-button metallic-blue"
-      style="display: inline-flex; align-items: center; text-decoration: none; padding: 0.5em 1em; background-color: #ffdd00; border-radius: 6px;">
-      <img src="https://cdn.buymeacoffee.com/buttons/bmc-new-btn-logo.svg" alt="Buy me a coffee"
-        style="height: 24px; vertical-align: middle; margin-right: 8px;">
-      <span style="font-size: 1.1em; font-weight: 600; color: #000;">Buy me a coffee</span>
-    </a>
-  </div>
-</section>
-</section>
-    <!-- Main Content with 3-Column Layout -->
-    <div id="main-layout">
-            <div id="main-content-inner">
-                <section class="panel upload-panel">
-                    <div class="panel-header">
-                        <h2>📤 Find SOURCE</h2>
-                        <p class="panel-description">Upload an image to find its source in our database</p>
+    </header>
+    <main id="main-layout">
+        <div id="main-content-inner">
+            <section class="panel upload-panel" aria-labelledby="uploadHeading">
+                <div class="panel-header"><h2 id="uploadHeading">📤 Find Source</h2><p class="panel-description">Upload an image to find its source</p></div>
+                <div class="upload-area" id="uploadArea" role="button" tabindex="0" aria-label="Choose an image to search">
+                    <span class="upload-icon" aria-hidden="true">📁</span>
+                    <p class="upload-text">Click to select image</p>
+                    <p class="upload-hint">JPG, PNG, GIF or WebP · Up to 100&nbsp;MB</p>
+                    <input type="file" id="fileInput" accept="image/jpeg,image/png,image/gif,image/webp" hidden>
+                </div>
+                <div class="quality-control">
+                    <label for="qualitySlider" class="threshold-label">Search quality: <output id="qualityValue" for="qualitySlider">Balanced</output></label>
+                    <input type="range" id="qualitySlider" min="0" max="3" step="1" value="1" class="threshold-slider" aria-describedby="qualityEstimate" disabled>
+                    <div class="quality-levels" aria-hidden="true"><span>Budget</span><span>Balanced</span><span>High</span><span>Very high</span></div>
+                    <p class="quality-estimate" id="qualityEstimate" aria-live="polite">Loading search options…</p>
+                </div>
+                <details class="advanced-options" id="advancedOptions">
+                    <summary class="advanced-summary">
+                        <span class="advanced-text"><span class="settings-icon" aria-hidden="true">⚙️</span>Advanced Options</span>
+                        <svg class="icon disclosure-icon" aria-hidden="true"><use href="#icon-chevron"/></svg>
+                    </summary>
+                    <div class="threshold-control">
+                        <label for="thresholdSlider" class="threshold-label">Similarity Threshold: <span id="thresholdValue">80%</span></label>
+                        <div class="threshold-input-group"><input type="range" id="thresholdSlider" min="10" max="100" value="80" class="threshold-slider" aria-describedby="thresholdHint"><div class="setting-number"><input type="number" id="thresholdInput" min="10" max="100" value="80" class="threshold-input" aria-label="Similarity threshold percentage"><span aria-hidden="true">%</span></div></div>
+                        <p class="threshold-hint" id="thresholdHint">Higher values show fewer, closer matches.</p>
                     </div>
-                    
-                    <div class="upload-area" id="uploadArea">
-                        <div class="upload-icon">📁</div>
-                        <p class="upload-text">Click to select image</p>
-                        <p class="upload-hint">Supports: JPG, PNG, GIF, WebP</p>
-                        <input type="file" id="fileInput" accept="image/*" style="display: none;">
+                    <div class="threshold-control">
+                        <label class="manual-search-toggle" for="manualSearchCheckbox"><input type="checkbox" id="manualSearchCheckbox" aria-describedby="manualSearchHint">Choose precision and clusters manually</label>
+                        <p class="threshold-hint" id="manualSearchHint">Quality levels choose these settings automatically.</p>
                     </div>
-                    
-                    <!-- Advanced Options -->
-                    <details class="advanced-options">
-                        <summary class="advanced-summary">
-                            <span class="advanced-icon">⚙️</span>
-                            <span class="advanced-text">Advanced Options</span>
-                        </summary>
-                        
-                        <!-- Threshold Filter -->
-                        <div class="threshold-control">
-                            <label for="thresholdSlider" class="threshold-label">
-                                Similarity Threshold: <span id="thresholdValue">75%</span>
-                            </label>
-                            <div class="threshold-input-group">
-                                <input 
-                                    type="range" 
-                                    id="thresholdSlider" 
-                                    min="10" 
-                                    max="100" 
-                                    value="75" 
-                                    class="threshold-slider"
-                                >
-                                <input 
-                                    type="number" 
-                                    id="thresholdInput" 
-                                    min="10" 
-                                    max="100" 
-                                    value="75" 
-                                    class="threshold-input"
-                                >
-                                <span class="threshold-unit">%</span>
-                            </div>
-                            <div class="threshold-hint">Higher threshold = fewer, more similar results</div>
-                        </div>
-
-                        <!-- Cluster Search -->
-                        <div class="threshold-control">
-                            <label for="clusterSlider" class="threshold-label">
-                                Clusters to search: <span id="clusterValue">10</span>
-                            </label>
-                            <div class="threshold-input-group">
-                                <input type="range" id="clusterSlider" min="1" max="80" value="10" class="threshold-slider">
-                                <input type="number" id="clusterInput" min="1" max="80" value="10" class="threshold-input">
-                            </div>
-                            <div class="threshold-hint">Higher value = search more clusters (slower, more comprehensive)</div>
-                        </div>
-                    </details>
-                    
-                    <div class="upload-controls">
-                        <button class="btn btn-primary" id="searchBtn" disabled>
-                            <span class="btn-icon">🔍</span>
-                            <span class="btn-text">Find SOURCE</span>
-                        </button>
-                        <button class="btn btn-secondary" id="clearBtn" style="display: none;">
-                            <span class="btn-icon">🗑️</span>
-                            <span class="btn-text">Clear</span>
-                        </button>
+                    <div class="threshold-control">
+                        <label for="quantizationSelect" class="threshold-label">Vector precision</label>
+                        <select id="quantizationSelect" class="quantization-select" aria-describedby="quantizationHint" disabled>
+                            <option value="lvq6" disabled>LVQ6 — smaller downloads</option>
+                            <option value="lvq8" disabled>LVQ8 — higher accuracy</option>
+                            <option value="fp16" selected>Full precision (FP16)</option>
+                        </select>
+                        <p class="threshold-hint" id="quantizationHint">Higher precision preserves more detail and downloads more data.</p>
                     </div>
-                    
-                    <div class="status" id="status" style="display: none;"></div>
-                </section>
-
-                <section class="panel results-panel">
-                    <div class="panel-header">
-                        <h2>🔍 Search Results</h2>
-                        <div class="results-info" id="resultsInfo" style="display: none;">
-                            <span id="resultsCount">0</span> sources found
-                        </div>
+                    <div class="threshold-control">
+                        <label for="clusterSlider" class="threshold-label">Clusters to search: <span id="clusterValue">10</span></label>
+                        <div class="threshold-input-group"><input type="range" id="clusterSlider" min="1" max="100" value="10" class="threshold-slider" aria-describedby="clusterHint"><div class="setting-number"><input type="number" id="clusterInput" min="1" max="100" value="10" class="threshold-input" aria-label="Number of clusters"></div></div>
+                        <p class="threshold-hint" id="clusterHint">Search more of the archive. Higher values take longer.</p>
                     </div>
-                    
-                    <div class="results-container">
-                        <div id="results">
-                            <div class="placeholder">
-                                <div class="placeholder-icon">📄</div>
-                                <div class="placeholder-title">No search performed yet</div>
-                                <div class="placeholder-subtitle">Upload an image and click "Find SOURCE" to search</div>
-                            </div>
-                        </div>
+                    <div class="precision-setting">
+                        <label class="extra-precision-toggle" for="extraPrecisionCheckbox"><span>Extended search</span><input type="checkbox" id="extraPrecisionCheckbox" aria-describedby="precisionHint"></label>
+                        <p class="threshold-hint" id="precisionHint">Unlock up to 1,000 clusters for a deeper, slower search.</p>
                     </div>
-                </section>
-            </div>
-	</div>
-    <!-- Footer -->
-    <footer class="footer">
-        <div class="footer-content">
-            <p>&copy; 2025 Reverse Hentai Search, by EchiCode</p>
+                </details>
+                <div class="upload-controls">
+                    <button class="btn btn-primary" id="searchBtn" disabled><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><span class="btn-text">Find Source</span></button>
+                    <button class="btn btn-secondary" id="clearBtn" style="display:none"><svg class="icon" aria-hidden="true"><use href="#icon-clear"/></svg><span>Clear</span></button>
+                </div>
+                <div class="status" id="status" role="status" aria-live="polite" style="display:none"></div>
+            </section>
+            <section class="panel results-panel" aria-labelledby="resultsHeading">
+                <div class="panel-header"><h2 id="resultsHeading">🔍 Search Results</h2><div class="results-info" id="resultsInfo" style="display:none"><span id="resultsCount">0</span> matches</div></div>
+                <div class="results-container"><div id="results">
+                    <div class="placeholder"><span class="placeholder-icon" aria-hidden="true">📄</span><h3 class="placeholder-title">No search performed yet</h3><p class="placeholder-subtitle">Upload an image and click &quot;Find Source&quot; to search</p></div>
+                </div></div>
+            </section>
         </div>
-    </footer>
-    <section style="max-width: 900px; margin: 0.5rem auto">
-  <h2 style="font-size: 1.8rem; margin-bottom: 1rem; border-bottom: 2px solid #eee;">
-    About This Project
-  </h2>
-  <p style="line-height: 1.6; color: #444;">
-  This tool is a fully client-side reverse image search engine for hentai manga. 
-  It uses <strong>Dino embeddings</strong> — a deep learning model trained to understand the content of images — 
-  allowing it to match pages even if they’ve been resized, compressed, or cropped. 
-  <strong> Everything runs in your browser for maximum privacy and speed.</strong>
-  </p>
-  <p style="line-height: 1.6; color: #444; margin-top: 0.25rem;">
-  The current alpha version indexes <strong>100,000 galleries</strong>. We’re actively working to expand coverage to <strong>1M galleries</strong>. 
-  Your help would enable us to achieve this while keeping the system <strong>100% private, offline, and ad-free</strong>.
-  </p>
-</section>
-    <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@petamoriken/float16@1.1.4/float16.min.js"></script>
-    <script src="app.js"></script>
+        <section class="about-section" aria-labelledby="aboutHeading">
+            <h2 id="aboutHeading">About This Project</h2>
+            <p>Fully client-side reverse image search engine for hentai manga. Uses DINO vision embeddings to match pages even after resizing, compression, or cropping. <strong>Everything runs in your browser, your selected image isn’t uploaded to any server.</strong></p>
+            <p>Indexes <strong>~656k nhentai galleries</strong> in the <strong>November 2026 archive release</strong>. Consider donating to help us expand and stay ad-free.</p>
+        </section>
+    </main>
+    <footer class="footer"><div class="footer-content"><p>© 2026 Reverse Hentai Search <span>by EchiCode</span></p><a href="https://github.com/sponsors/echi-code" target="_blank" rel="noopener noreferrer">Sponsor on GitHub ↗</a></div></footer>
+    <script defer src="search-release.js?v=20261117-echicode-data"></script>
+    <script defer src="centroid-simd.js?v=20261116-simd-centroids"></script>
+    <script defer src="centroid-worker-pool.js?v=20261116-simd-centroids"></script>
+    <script defer src="search.js?v=20261117-echicode-data"></script>
+    <script defer src="search-quality.js?v=20261116-96k-final"></script>
+    <script defer src="image-inference.js?v=20261117-inference-readback"></script>
+    <script defer src="app.js?v=20261117-parallel-startup"></script>
 </body>
 </html>
-
